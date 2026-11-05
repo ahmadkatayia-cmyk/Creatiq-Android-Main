@@ -1,0 +1,705 @@
+package com.laminated.app.ui
+
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.input.pointer.AwaitPointerEventScope
+import androidx.compose.foundation.layout.wrapContentHeight
+import kotlinx.coroutines.withTimeoutOrNull
+import kotlin.math.roundToInt
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.waitForUpOrCancellation
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Icon
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.foundation.Image
+import androidx.compose.ui.graphics.BlendMode
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
+import androidx.compose.ui.res.painterResource
+import com.laminated.app.R
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.RoundRect
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import com.laminated.app.canvas.CanvasViewModel
+import com.laminated.app.canvas.Panel
+import com.laminated.app.core.ToolKind
+
+private val SliderLeft = 5.dp
+private val SizeTrackTop = 6.dp
+private val OpacityTrackTop = 198.dp
+
+/** A tap target without a ripple: the bars show their state through colour alone. */
+private fun Modifier.tap(enabled: Boolean = true, onClick: () -> Unit): Modifier = composed {
+    clickable(remember { MutableInteractionSource() }, indication = null, enabled = enabled, onClick = onClick)
+}
+
+/** The bar across the top of the canvas: artwork actions on the left, painting tools on the right. */
+@Composable
+fun TopBar(
+    vm: CanvasViewModel,
+    modifier: Modifier = Modifier,
+    buttonPositions: MutableMap<String, Float>? = null,
+) {
+    BoxWithConstraints(modifier.fillMaxWidth().height(Pc.TotalBarHeight).background(Pc.Bar).padding(top = Pc.BarTopMargin)) {
+        val (toolGap, actionGap) = Pc.barGaps(maxWidth)
+        val panelOpen = vm.panel == Panel.LAYERS || vm.panel == Panel.COLOR || vm.transforming || vm.selecting || vm.adjustment != null
+
+        val isCompact = maxWidth < 600.dp
+
+        if (isCompact) {
+            val scrollState = rememberScrollState()
+            LaunchedEffect(Unit) {
+                scrollState.scrollTo(scrollState.maxValue)
+            }
+            Row(
+                Modifier
+                    .fillMaxSize()
+                    .horizontalScroll(scrollState)
+                    .padding(horizontal = Pc.BarMargin),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                // Left tools: Gallery, Actions, Adjustments, Selection, Transform
+                Box(
+                    Modifier
+                        .size(Pc.GalleryWidth, Pc.BarButtonHeight)
+                        .onGloballyPositioned { coords ->
+                            buttonPositions?.put("Gallery", coords.positionInRoot().x + coords.size.width / 2f)
+                        }
+                        .tap { vm.closeArtwork() },
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_tool_gallery),
+                        contentDescription = "Gallery",
+                        modifier = Modifier.requiredSize(36.dp),
+                    )
+                }
+
+                ActionButton(
+                    label = "Actions", selected = vm.panel == Panel.ACTIONS, drawableRes = R.drawable.ic_tool_actions, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Actions", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) { vm.toggle(Panel.ACTIONS) }
+
+                ActionButton(
+                    label = "Adjustments",
+                    selected = vm.panel == Panel.ADJUSTMENTS || vm.adjustment != null || vm.opacityLayer != null || vm.recoloring,
+                    drawableRes = R.drawable.ic_tool_adjustments, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Adjustments", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) { vm.adjustmentsPressed() }
+
+                ActionButton(
+                    label = "Transform", selected = vm.transforming, drawableRes = R.drawable.ic_tool_transform, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Transform", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) { vm.toggleTransform() }
+
+                ActionButton(
+                    label = "Selection", selected = vm.selecting, drawableRes = R.drawable.ic_tool_selection, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Selection", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) { vm.toggleSelecting() }
+
+                Spacer(Modifier.width(16.dp))
+
+                ToolButton(
+                    label = "Sidebar",
+                    selected = vm.showSideBar,
+                    drawableRes = R.drawable.ic_tool_sidebar, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Sidebar", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) {
+                    vm.showSideBar = !vm.showSideBar
+                }
+
+                ToolButton(
+                    label = "Smudge", selected = !panelOpen && vm.tool == ToolKind.SMUDGE, onHold = { vm.toolHeld(ToolKind.SMUDGE) },
+                    drawableRes = R.drawable.ic_tool_smudge, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Smudge", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) {
+                    vm.toolPressed(ToolKind.SMUDGE)
+                }
+
+                ToolButton(
+                    label = "Paint",
+                    selected = vm.adjustPencil || (!panelOpen && vm.tool == ToolKind.PAINT),
+                    onHold = { vm.toolHeld(ToolKind.PAINT) },
+                    drawableRes = R.drawable.ic_tool_brush, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Paint", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) {
+                    vm.toolPressed(ToolKind.PAINT)
+                }
+
+                ToolButton(
+                    label = "Erase", selected = !panelOpen && vm.tool == ToolKind.ERASE, onHold = { vm.toolHeld(ToolKind.ERASE) },
+                    drawableRes = R.drawable.ic_tool_eraser, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Erase", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) {
+                    vm.toolPressed(ToolKind.ERASE)
+                }
+
+                ToolButton(
+                    label = "Layers", selected = vm.panel == Panel.LAYERS,
+                    drawableRes = R.drawable.ic_tool_layers, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Layers", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) { vm.toggle(Panel.LAYERS) }
+
+                ColorButton(
+                    vm,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Color", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                )
+            }
+        } else {
+            Row(
+                Modifier.align(Alignment.CenterStart).padding(start = Pc.BarMargin),
+                horizontalArrangement = Arrangement.spacedBy(actionGap),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    Modifier
+                        .size(Pc.GalleryWidth, Pc.BarButtonHeight)
+                        .onGloballyPositioned { coords ->
+                            buttonPositions?.put("Gallery", coords.positionInRoot().x + coords.size.width / 2f)
+                        }
+                        .tap { vm.closeArtwork() },
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Image(
+                        painter = painterResource(id = R.drawable.ic_tool_gallery),
+                        contentDescription = "Gallery",
+                        modifier = Modifier.requiredSize(36.dp),
+                    )
+                }
+                ActionButton(
+                    label = "Actions", selected = vm.panel == Panel.ACTIONS, drawableRes = R.drawable.ic_tool_actions, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Actions", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) { vm.toggle(Panel.ACTIONS) }
+
+                ActionButton(
+                    label = "Adjustments",
+                    selected = vm.panel == Panel.ADJUSTMENTS || vm.adjustment != null || vm.opacityLayer != null || vm.recoloring,
+                    drawableRes = R.drawable.ic_tool_adjustments, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Adjustments", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) { vm.adjustmentsPressed() }
+
+                ActionButton(
+                    label = "Transform", selected = vm.transforming, drawableRes = R.drawable.ic_tool_transform, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Transform", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) { vm.toggleTransform() }
+
+                ActionButton(
+                    label = "Selection", selected = vm.selecting, drawableRes = R.drawable.ic_tool_selection, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Selection", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) { vm.toggleSelecting() }
+
+            }
+
+            Row(
+                Modifier.align(Alignment.CenterEnd).padding(end = Pc.BarMargin),
+                horizontalArrangement = Arrangement.spacedBy(toolGap),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                ToolButton(
+                    label = "Sidebar",
+                    selected = vm.showSideBar,
+                    drawableRes = R.drawable.ic_tool_sidebar, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Sidebar", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) {
+                    vm.showSideBar = !vm.showSideBar
+                }
+
+                ToolButton(
+                    label = "Smudge", selected = !panelOpen && vm.tool == ToolKind.SMUDGE, onHold = { vm.toolHeld(ToolKind.SMUDGE) },
+                    drawableRes = R.drawable.ic_tool_smudge, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Smudge", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) {
+                    vm.toolPressed(ToolKind.SMUDGE)
+                }
+
+                ToolButton(
+                    label = "Paint",
+                    selected = vm.adjustPencil || (!panelOpen && vm.tool == ToolKind.PAINT),
+                    onHold = { vm.toolHeld(ToolKind.PAINT) },
+                    drawableRes = R.drawable.ic_tool_brush, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Paint", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) {
+                    vm.toolPressed(ToolKind.PAINT)
+                }
+
+                ToolButton(
+                    label = "Erase", selected = !panelOpen && vm.tool == ToolKind.ERASE, onHold = { vm.toolHeld(ToolKind.ERASE) },
+                    drawableRes = R.drawable.ic_tool_eraser, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Erase", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) {
+                    vm.toolPressed(ToolKind.ERASE)
+                }
+
+                ToolButton(
+                    label = "Layers", selected = vm.panel == Panel.LAYERS,
+                    drawableRes = R.drawable.ic_tool_layers, glyph = 36.dp,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Layers", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                ) { vm.toggle(Panel.LAYERS) }
+
+                ColorButton(
+                    vm,
+                    modifier = Modifier.onGloballyPositioned { coords ->
+                        buttonPositions?.put("Color", coords.positionInRoot().x + coords.size.width / 2f)
+                    },
+                )
+            }
+        }
+    }
+}
+
+/** An action button: its glyph on a dark disc, which turns blue while its panel is open. */
+@Composable
+private fun ActionButton(
+    icon: ImageVector? = null,
+    label: String,
+    selected: Boolean = false,
+    glyph: Dp = 36.dp,
+    drawableRes: Int? = null,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit = {},
+) {
+    Box(Modifier.size(Pc.BarButtonWidth, Pc.BarButtonHeight).then(modifier).tap(onClick = onClick), contentAlignment = Alignment.Center) {
+        if (selected) {
+            Box(Modifier.size(38.dp).clip(CircleShape).background(Pc.Accent.copy(alpha = 0.25f)))
+        }
+        if (drawableRes != null) {
+            Image(
+                painter = painterResource(id = drawableRes),
+                contentDescription = label,
+                modifier = Modifier.requiredSize(if (selected) glyph else (glyph - 2.dp)),
+                alpha = if (selected) 1.0f else 0.70f,
+                colorFilter = if (selected) ColorFilter.tint(Pc.Accent, BlendMode.SrcAtop) else null,
+            )
+        } else if (icon != null) {
+            val lit = animateHighlight(selected)
+            Icon(icon, contentDescription = label, tint = lerp(Pc.ActionGlyph, Color.White, lit), modifier = Modifier.requiredSize(glyph))
+        }
+    }
+}
+
+/** A tap target that also does [onHold] when held instead. */
+private fun Modifier.tapOrHold(onClick: () -> Unit, onHold: () -> Unit): Modifier = composed {
+    val tap by rememberUpdatedState(onClick)
+    val hold by rememberUpdatedState(onHold)
+    pointerInput(Unit) { detectTapGestures(onLongPress = { hold() }, onTap = { tap() }) }
+}
+
+/** A tool button: tapped, the tool (or its brushes); held ([onHold]), it takes the current brush. */
+@Composable
+private fun ToolButton(
+    icon: ImageVector? = null,
+    label: String,
+    selected: Boolean,
+    onHold: (() -> Unit)? = null,
+    drawableRes: Int? = null,
+    glyph: Dp = 36.dp,
+    modifier: Modifier = Modifier,
+    onClick: () -> Unit,
+) {
+    val touch = if (onHold != null) Modifier.tapOrHold(onClick, onHold) else Modifier.tap(onClick = onClick)
+    Box(Modifier.size(Pc.BarButtonWidth, Pc.BarButtonHeight).then(modifier).then(touch), contentAlignment = Alignment.Center) {
+        if (selected) {
+            Box(Modifier.size(38.dp).clip(CircleShape).background(Pc.Accent.copy(alpha = 0.25f)))
+        }
+        if (drawableRes != null) {
+            Image(
+                painter = painterResource(id = drawableRes),
+                contentDescription = label,
+                modifier = Modifier.requiredSize(if (selected) glyph else (glyph - 2.dp)),
+                alpha = if (selected) 1.0f else 0.70f,
+                colorFilter = if (selected) ColorFilter.tint(Pc.Accent, BlendMode.SrcAtop) else null,
+            )
+        } else if (icon != null) {
+            Icon(icon, contentDescription = label, tint = lerp(Pc.BarGlyph, Pc.BarGlyphSelected, animateHighlight(selected)), modifier = Modifier.requiredSize(44.dp))
+        }
+    }
+}
+
+@Composable
+private fun ColorButton(vm: CanvasViewModel, modifier: Modifier = Modifier) {
+    val rgb = vm.colorRgb()
+    // ringed only where the colour would fade into the bar: dark ones on the dark bar, light ones
+    // on the light bar
+    val ringed = if (Pc.light) vm.brightness > LIGHT_RING_ABOVE else vm.brightness < DARK_RING_BELOW
+    // held, the colour painted with before
+    // dragged out onto the canvas, it fills there (ColorDrop)
+    Box(Modifier.size(Pc.BarButtonWidth, Pc.BarButtonHeight).then(modifier).dropSource(vm, onHold = { vm.previousColor() }) { vm.toggle(Panel.COLOR) }, contentAlignment = Alignment.Center) {
+        val dot = Modifier.size(Pc.ColorDot).clip(CircleShape).background(CanvasSpace.color(rgb))
+        Box(if (ringed) dot.border(1.dp, Pc.ColorRing, CircleShape) else dot)
+    }
+}
+
+/** The colour button's brightness (HSB) under which it is ringed on the dark bar. */
+private const val DARK_RING_BELOW = 0.35f
+
+/** The colour button's brightness over which it is ringed on the light bar. */
+private const val LIGHT_RING_ABOVE = 0.85f
+
+/**
+ * The side bar against the left edge (the right one, [right]-handed): brush size, the modify
+ * button, opacity, undo and redo. On the right everything is mirrored but the glyphs.
+ */
+@Composable
+fun SideBar(vm: CanvasViewModel, modifier: Modifier = Modifier, right: Boolean = false) {
+    // a control's left edge, mirrored on the right
+    fun x(left: Dp, width: Dp) = if (right) Pc.SideBarWidth - left - width else left
+    BoxWithConstraints {
+        val isLandscape = maxHeight < 500.dp
+        val barHeight = if (isLandscape) (maxHeight - 64.dp).coerceAtMost(290.dp) else Pc.SideBarHeight
+        val sliderHeight = if (isLandscape) 88.dp else Pc.SliderHeight
+        val modifyTop = if (isLandscape) 99.dp else 157.dp
+        val opacityTop = if (isLandscape) 138.dp else OpacityTrackTop
+        val undoTop = if (isLandscape) 231.dp else 351.dp
+        val redoTop = if (isLandscape) 263.dp else 390.dp
+
+        Box(
+            modifier.size(Pc.SideBarWidth, barHeight)
+                .drawBehind {
+                    // translucent, with windows where the slider tracks are: they show what is behind
+                    val r = Pc.SideBarCorner.toPx()
+                    val track = Size(Pc.SliderWidth.toPx(), sliderHeight.toPx())
+                    val trackR = CornerRadius(Pc.SliderCorner.toPx())
+                    val body = Path().apply {
+                        fillType = PathFillType.EvenOdd
+                        val (inner, outer) = CornerRadius.Zero to CornerRadius(r)
+                        addRoundRect(
+                            if (right) RoundRect(0f, 0f, size.width, size.height, outer, inner, inner, outer)
+                            else RoundRect(0f, 0f, size.width, size.height, inner, outer, outer, inner),
+                        )
+                        for (top in listOf(SizeTrackTop, opacityTop)) {
+                            val o = Offset(x(SliderLeft, Pc.SliderWidth).toPx(), top.toPx())
+                            addRoundRect(RoundRect(o.x, o.y, o.x + track.width, o.y + track.height, trackR))
+                        }
+                    }
+                    drawPath(body, Pc.SideBar)
+                },
+        ) {
+            BrushSlider(vm.size, vm::changeSize, Modifier.offset(x(SliderLeft, Pc.SliderWidth), SizeTrackTop), panel(vm, CanvasViewModel.SliderPanel.SIZE), vm.sizeNotches, sliderHeight = sliderHeight)
+            // the modify button: the next touch on the canvas picks a colour
+            Box(
+                Modifier.offset(x(5.dp, 34.dp), modifyTop).size(34.dp, 35.dp).pointerInput(Unit) {
+                    // held, it changes what a canvas touch does; tapped, it does what Tap □ is set to
+                    awaitEachGesture {
+                        awaitFirstDown().consume()
+                        vm.modifyPressed()
+                        val up = waitForUpOrCancellation()
+                        up?.consume()
+                        vm.modifyReleased(cancelled = up == null)
+                    }
+                },
+                contentAlignment = Alignment.Center,
+            ) {
+                Box(
+                    Modifier.size(Pc.ModifySize).drawBehind {
+                        val w = Pc.ModifyStroke.toPx()
+                        drawRoundRect(
+                            if (vm.pickNext) Pc.Accent else Pc.SideGlyph,
+                            topLeft = Offset(w / 2f, w / 2f),
+                            size = Size(size.width - w, size.height - w),
+                            cornerRadius = CornerRadius(Pc.ModifyCorner.toPx() - w / 2f),
+                            style = Stroke(w),
+                        )
+                    },
+                )
+            }
+            BrushSlider(vm.opacity, vm::changeOpacity, Modifier.offset(x(SliderLeft, Pc.SliderWidth), opacityTop), panel(vm, CanvasViewModel.SliderPanel.OPACITY), vm.opacityNotches, sliderHeight = sliderHeight)
+            // beside the slider it belongs to, a little above it, outside the bar
+            vm.sliderPanel?.let { which ->
+                val top = if (which == CanvasViewModel.SliderPanel.SIZE) SizeTrackTop else opacityTop
+                SliderPanel(vm, which, Modifier.offset(x(SliderLeft + Pc.SliderWidth + SliderPanelGap, SliderPanelSide), top - SliderPanelRise))
+            }
+            SideButton(PcIcons.Undo, "Undo", vm.canUndo, Modifier.offset(x(5.dp, 34.dp), undoTop)) { vm.undo() }
+            SideButton(PcIcons.Redo, "Redo", vm.canRedo, Modifier.offset(x(5.dp, 34.dp), redoTop)) { vm.redo() }
+        }
+    }
+}
+
+@Composable
+private fun SideButton(icon: ImageVector, label: String, enabled: Boolean, modifier: Modifier, onClick: () -> Unit) {
+    Box(modifier.size(34.dp, 35.dp).tap(enabled, onClick), contentAlignment = Alignment.Center) {
+        // a 50 frame shown 30 across
+        Icon(icon, contentDescription = label, tint = if (enabled) Pc.SideGlyph else Pc.SideGlyphDisabled, modifier = Modifier.requiredSize(30.dp))
+    }
+}
+
+/** What a slider's panel does: shown while it is dragged ([held] false), kept up when it is held still. */
+class SliderPanelHooks(val show: (held: Boolean) -> Unit, val hide: () -> Unit)
+
+private fun panel(vm: CanvasViewModel, which: CanvasViewModel.SliderPanel) = SliderPanelHooks(
+    show = { held ->
+        vm.sliderPanel = which
+        vm.sliderPanelKept = held
+    },
+    hide = { if (!vm.sliderPanelKept) vm.sliderPanel = null },
+)
+
+private val SliderPanelSide = 190.dp
+private val SliderPanelGap = 8.dp
+private val SliderPanelRise = 10.dp
+// dark glass over the canvas (what is behind it blurred), or light
+private val SliderPanelFill get() = if (Pc.light) Color(0xFFE7E7E7) else Color(0xC93E3E3E)
+private val SliderPanelInk get() = if (Pc.light) Color(0xFF393939) else Color(0xFFF0F0F0)
+// the dot is drawn in the interface's ink, not the brush's colour
+private val SliderPanelDot get() = if (Pc.light) Color.Black else Color.White
+
+/**
+ * A slider's panel: its name and value ("Size 8%"), a button saving the value as a notch on the
+ * slider ("+"; "-" takes away the notch it is on), and in the middle a dot of the brush as it
+ * would paint now, its size on the screen (and at its opacity).
+ */
+@Composable
+private fun SliderPanel(vm: CanvasViewModel, which: CanvasViewModel.SliderPanel, modifier: Modifier) {
+    val size = which == CanvasViewModel.SliderPanel.SIZE
+    val value = if (size) vm.size else vm.opacity
+    val diameter = androidx.compose.runtime.remember(vm.size) { vm.brushScreenDiameter() }
+    // its own size, past the bar's edge (the bar's width would otherwise squeeze it)
+    Box(
+        modifier.wrapContentSize(Alignment.TopStart, unbounded = true).size(SliderPanelSide)
+            .then(if (Pc.light) Modifier else rememberFrost(22.dp))
+            .clip(RoundedCornerShape(22.dp)).background(SliderPanelFill)
+            // a hairline rim, as the reference's (about 25 over the glass)
+            .border(1.dp, Pc.GlassMenuEdge, RoundedCornerShape(22.dp)),
+    ) {
+        Text(
+            androidx.compose.ui.text.buildAnnotatedString {
+                pushStyle(androidx.compose.ui.text.SpanStyle(fontWeight = FontWeight.Bold))
+                append(if (size) "Size" else "Opacity")
+                pop()
+                append(" ${(value * 100f).roundToInt()}%")
+            },
+            color = SliderPanelInk,
+            fontSize = 19.sp,
+            maxLines = 1,
+            modifier = Modifier.offset(16.dp, 6.dp).height(32.dp).wrapContentHeight(Alignment.CenterVertically),
+        )
+        val onNotch = vm.notchAt(size, value) != null
+        if (onNotch || vm.canSaveNotch(size)) {
+            Box(Modifier.offset(150.dp, 6.dp).size(32.dp).tap { vm.toggleNotch(size) }, contentAlignment = Alignment.Center) {
+                Icon(
+                    if (onNotch) PcIcons.NotchRemove else PcIcons.NotchAdd,
+                    contentDescription = if (onNotch) "Remove" else "Save",
+                    tint = SliderPanelInk,
+                    modifier = Modifier.size(24.dp),
+                )
+            }
+        }
+        androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+            val r = (diameter / 2f).coerceIn(1.5f, this.size.minDimension / 2f - 8.dp.toPx())
+            drawCircle(SliderPanelDot.copy(alpha = if (size) 1f else value.coerceIn(0.02f, 1f)), r, center)
+        }
+    }
+}
+
+/**
+ * An upright slider moved by dragging anywhere on it: the thumb follows the finger (relative,
+ * not jump-to-touch), 1 at the top. Moved, its [panel] shows while it moves; held still, it stays up.
+ * Its [notches] (saved values) show as marks on the track; a value dragged near one is pulled onto
+ * it, and a tap on one goes there. On a notch, the thumb shows a blue bar.
+ */
+@Composable
+fun BrushSlider(value: Float, onChange: (Float) -> Unit, modifier: Modifier = Modifier, panel: SliderPanelHooks? = null, notches: List<Float> = emptyList(), sliderHeight: Dp = Pc.SliderHeight) {
+    val current by rememberUpdatedState(value)
+    val change by rememberUpdatedState(onChange)
+    val hooks by rememberUpdatedState(panel)
+    val marks by rememberUpdatedState(notches)
+    fun near(v: Float, reach: Float = CanvasViewModel.NOTCH_NEAR) =
+        marks.filter { kotlin.math.abs(it - v) < reach }.minByOrNull { kotlin.math.abs(it - v) }
+    Box(
+        modifier.size(Pc.SliderWidth, sliderHeight)
+            .pointerInput(Unit) {
+                val travel = (sliderHeight - Pc.ThumbHeight - Pc.ThumbInset * 2).toPx()
+                awaitEachGesture {
+                    val down = awaitFirstDown()
+                    down.consume()
+                    var last = down.position.y
+                    var moved = false
+                    var lifted = false
+                    // where the finger has taken it, before a notch pulls it in
+                    var raw = current
+                    // follows the finger; false once it is lifted
+                    suspend fun AwaitPointerEventScope.follow(): Boolean {
+                        val c = awaitPointerEvent().changes.firstOrNull { it.id == down.id }
+                        if (c == null || !c.pressed) return false
+                        val dy = c.position.y - last
+                        if (dy != 0f) {
+                            if (!moved) hooks?.show(false)
+                            moved = true
+                            last = c.position.y
+                            raw = (raw - dy / travel).coerceIn(0f, 1f)
+                            change(near(raw) ?: raw)
+                        }
+                        c.consume()
+                        return true
+                    }
+                    withTimeoutOrNull(viewConfiguration.longPressTimeoutMillis) {
+                        while (!lifted && !moved) lifted = !follow()
+                    }
+                    if (!lifted && !moved) hooks?.show(true)
+                    // a tap on a notch's mark goes to it
+                    if (lifted && !moved) {
+                        val inset = Pc.ThumbInset.toPx()
+                        val at = 1f - (down.position.y - inset - Pc.ThumbHeight.toPx() / 2f) / travel
+                        near(at, Pc.ThumbHeight.toPx() / 2f / travel)?.let { change(it) }
+                    }
+                    while (!lifted) lifted = !follow()
+                    if (moved) hooks?.hide()
+                }
+            }
+            .drawBehind {
+                val inset = Pc.ThumbInset.toPx()
+                val thumb = Size(Pc.ThumbWidth.toPx(), Pc.ThumbHeight.toPx())
+                val at = Offset((size.width - thumb.width) / 2f, inset + (size.height - thumb.height - inset * 2) * (1f - value))
+                val knob = RoundRect(at.x, at.y, at.x + thumb.width, at.y + thumb.height, CornerRadius(thumb.height / 2f))
+                // the track has a window where the thumb is, so the thumb shows over the bar alone;
+                // a lighter rim runs round it
+                val corner = Pc.SliderCorner.toPx()
+                val rim = Pc.SliderRimWidth.toPx()
+                val inside = RoundRect(rim, rim, size.width - rim, size.height - rim, CornerRadius(corner - rim))
+                val track = Path().apply {
+                    fillType = PathFillType.EvenOdd
+                    addRoundRect(inside)
+                    addRoundRect(knob)
+                }
+                drawPath(track, Pc.SliderTrack)
+                val ring = Path().apply {
+                    fillType = PathFillType.EvenOdd
+                    addRoundRect(RoundRect(0f, 0f, size.width, size.height, CornerRadius(corner)))
+                    addRoundRect(inside)
+                }
+                drawPath(ring, Pc.SliderRim)
+                // the notches: short bars across the track; on one, the thumb shows a blue bar
+                val bar = Size(NotchWidth.toPx(), NotchHeight.toPx())
+                val travel = size.height - thumb.height - inset * 2
+                for (n in notches) {
+                    val y = inset + thumb.height / 2f + travel * (1f - n)
+                    drawRoundRect(NotchMark, Offset((size.width - bar.width) / 2f, y - bar.height / 2f), bar, CornerRadius(bar.height / 2f))
+                }
+                drawPath(Path().apply { addRoundRect(knob) }, Pc.SliderThumb)
+                if (notches.any { kotlin.math.abs(it - value) < 1e-4f }) {
+                    drawRoundRect(Pc.Accent, Offset((size.width - bar.width) / 2f, at.y + (thumb.height - bar.height) / 2f), bar, CornerRadius(bar.height / 2f))
+                }
+            },
+    )
+}
+
+private val NotchWidth = 20.dp
+private val NotchHeight = 4.dp
+private val NotchMark = Color(0x1AFFFFFF)
+
+/** The brush's outline where the pen paints or hovers: a thin grey ring with a light edge. */
+@Composable
+fun BrushCursor(vm: CanvasViewModel) {
+    val at = vm.cursorAt ?: return
+    val r = vm.cursorRadius
+    if (r < 2f) return
+    val style = vm.cursorStyle
+    val paint = CanvasSpace.color(vm.colorRgb())
+    androidx.compose.foundation.Canvas(Modifier.fillMaxSize()) {
+        when (style) {
+            CanvasViewModel.CursorStyle.CONTRAST -> {
+                drawCircle(Color.White, r, at, style = Stroke(3.dp.toPx()))
+                drawCircle(Color.Black, r, at, style = Stroke(1.dp.toPx()))
+            }
+            CanvasViewModel.CursorStyle.COLOR -> {
+                drawCircle(Color(0x99FFFFFF), r, at, style = Stroke(3.dp.toPx()))
+                drawCircle(paint, r, at, style = Stroke(1.5.dp.toPx()))
+            }
+            // as the brush says: none, contrasting rings, or the colour
+            CanvasViewModel.CursorStyle.BRUSH -> when (vm.cursorOutline) {
+                0 -> Unit
+                2 -> {
+                    drawCircle(Color(0x99FFFFFF), r, at, style = Stroke(3.dp.toPx()))
+                    drawCircle(paint, r, at, style = Stroke(1.5.dp.toPx()))
+                }
+                else -> {
+                    drawCircle(Color.White, r, at, style = Stroke(3.dp.toPx()))
+                    drawCircle(Color.Black, r, at, style = Stroke(1.dp.toPx()))
+                }
+            }
+        }
+    }
+}
